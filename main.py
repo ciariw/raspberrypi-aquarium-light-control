@@ -38,10 +38,14 @@ Wants:
 async def color():
     global state
     global schedule
-    while True:
+    R = LED(pin_R) if pin(pin_R) is not None else None
+    G = LED(pin_G) if pin(pin_G) is not None else None
+    B = LED(pin_B) if pin(pin_B) is not None else None
+    V = LED(pin_W) if pin(pin_W) is not None else None
+
+   while True:
         await state_changed.wait()
         state_changed.clear()
-        R = LED(pin_R) if pin(pin_R) is not None else None
         if schedule["set"][state] == "ON":
             print("Trigger ON")
             if R is not None:
