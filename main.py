@@ -2,7 +2,7 @@ from config import *
 import asyncio
 from datetime import datetime, timedelta, timezone
 import json
-from gpiozero import LED
+from gpiozero import LED, PWMOutputDevice
 
 
 # Connected pins are 23,24,25,26
@@ -43,21 +43,27 @@ async def color():
 
     print(f"update state {state}. Turning unit {schedule['set'][state]}")
 
-    R = LED(pin_R) if pin(pin_R) is not None else None
-    G = LED(pin_G) if pin(pin_G) is not None else None
-    B = LED(pin_B) if pin(pin_B) is not None else None
-    V = LED(pin_W) if pin(pin_W) is not None else None
+    R = PWMOutputDevice(pin=pin_R, frequency=1000 ) if pin(pin_R) is not None else None
+    G = PWMOutputDevice(pin=pin_G, frequency=1000 ) if pin(pin_G) is not None else None
+    B = PWMOutputDevice(pin=pin_B, frequency=1000 ) if pin(pin_B) is not None else None
+    W = PWMOutputDevice(pin=pin_W, frequency=1000 ) if pin(pin_W) is not None else None
     while True:
         await state_changed.wait()
         state_changed.clear()
         if schedule["set"][state] == "ON":
             print("Trigger ON")
-            if R is not None:
-                R.on()
+            R.value= 0
+            G.value= 0
+            B.value= 1
+            W.value= 1
+                
         else:
             print("Trigger OFF")
             if R is not None:
-                R.off()
+                R.value=0
+                G.value=0
+                B.value=0
+                W.value=0
 
 
 async def get_state():
