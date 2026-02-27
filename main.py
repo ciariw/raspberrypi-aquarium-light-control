@@ -2,6 +2,9 @@ from config import *
 import asyncio
 from datetime import datetime, timedelta, timezone
 import json
+from flask import Flask
+import asyncio
+import threading
 from gpiozero import LED, PWMOutputDevice
 
 
@@ -12,9 +15,19 @@ from gpiozero import LED, PWMOutputDevice
 global schedule
 global state
 global today
+
+IS_SIMULATED = True
+
+
+
+
 today = datetime.now().strftime("%Y-%m-%d")
 state = -1
 state_changed = asyncio.Event()
+
+
+app = Flask(__name__)
+
 
 def pin(x):
     if x != '':
@@ -31,9 +44,9 @@ with open("schedule.json", "r") as f:
 
 '''
 Wants:
-[ ] load schedule
-[ ] get the current state
-[ ] set light state 
+[X] load schedule
+[X] get the current state
+[X] set light state 
 
 '''
 
@@ -42,24 +55,26 @@ async def color():
     global schedule
 
     print(f"update state {state}. Turning unit {schedule['set'][state]}")
+    if not IS_SIMULATED:
+        R = PWMOutputDevice(pin=pin_R, frequency=1000 ) if pin(pin_R) is not None else None
+        G = PWMOutputDevice(pin=pin_G, frequency=1000 ) if pin(pin_G) is not None else None
+        B = PWMOutputDevice(pin=pin_B, frequency=1000 ) if pin(pin_B) is not None else None
+        W = PWMOutputDevice(pin=pin_W, frequency=1000 ) if pin(pin_W) is not None else None
 
-    R = PWMOutputDevice(pin=pin_R, frequency=1000 ) if pin(pin_R) is not None else None
-    G = PWMOutputDevice(pin=pin_G, frequency=1000 ) if pin(pin_G) is not None else None
-    B = PWMOutputDevice(pin=pin_B, frequency=1000 ) if pin(pin_B) is not None else None
-    W = PWMOutputDevice(pin=pin_W, frequency=1000 ) if pin(pin_W) is not None else None
     while True:
         await state_changed.wait()
         state_changed.clear()
         if schedule["set"][state] == "ON":
             print("Trigger ON")
-            R.value= 0
-            G.value= 0
-            B.value= 1
-            W.value= 1
+            if not IS_SIMULATED:
+                R.value= 0
+                G.value= 0
+                B.value= 1
+                W.value= 1
                 
         else:
             print("Trigger OFF")
-            if R is not None:
+            if not IS_SIMULATED:
                 R.value=0
                 G.value=0
                 B.value=0
@@ -124,11 +139,21 @@ async def get_state():
         await asyncio.sleep(delta.seconds+1) # check every 5 minutes
 
 
-async def main():
-    t1 = asyncio.create_task(get_state())
-    t2 = asyncio.create_task(color())
-    await asyncio.gather(t1, t2)
+def start_asyncio_thread():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    loop.create_task(get_state())
+    loop.create_task(color())
+    loop.run_forever()
+
+
+@app.route("/",methods=['GET'])
+def index():
+    return "ok"
+
 
 if __name__ == '__main__':
-    print("starting")
-    asyncio.run(main())
+    t = threading.Thread(target=start_asyncio_thread, daemon=False)
+    t.start()
+    app.run(host='0.0.0.0', port=5000)
