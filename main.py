@@ -1,14 +1,15 @@
 from config import *
 from datetime import datetime, timedelta, timezone
 import json
-from flask import Flask, request
+from flask import Flask, request, send_from_directory
 import asyncio
 import tempfile
 import os
 import threading
 from gpiozero import LED, PWMOutputDevice
 
-
+DIST_DIR = os.path.join(os.path.dirname(__file__), "Aquatimation/dist")
+print(DIST_DIR)
 # Connected pins are 23,24,25,26
 # each used to control W, R,G,B unless relay controlled
 #
@@ -110,7 +111,7 @@ state_changed = asyncio.Event()
 update_schedule = asyncio.Event()
 
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder=DIST_DIR, static_url_path="/")
 
 
 def pin(x):
@@ -120,7 +121,7 @@ def pin(x):
         return None
 
 
-def write_schedule(key,value):
+def write_schedule(key,value, st=None):
     global state
     global schedule
     fp = os.path.dirname("schedule.json")
@@ -133,7 +134,8 @@ def write_schedule(key,value):
         #print(schedule)
         if schedule:
             #print(schedule)
-            schedule[key][state] = value
+            print(state)
+            schedule[key][state if st is None else st] = value
             json.dump(schedule, file,indent = 2)
             file.flush()
             os.fsync(file.fileno())
@@ -162,7 +164,7 @@ async def color():
     G = PinAssignment(pin_G)
     B = PinAssignment(pin_B)
     W = PinAssignment(pin_W)
-    print(f"update state {state}. Turning unit {schedule['set'][state]}")
+    print(f"update state {state}. Turning unit {schedule['enabled']}")
 
     while True:
         await state_changed.wait()
@@ -230,7 +232,7 @@ async def get_state():
         if current_state != state:
             today = datetime_at_loop_start.strftime("%Y-%m-%d")
             state_changed.set()
-
+        print(f"Waiting for {delta.seconds+1} seconds")
         await asyncio.sleep(delta.seconds+1) # check every 5 minutes
 
 
@@ -246,7 +248,7 @@ def start_asyncio_thread():
 
 @app.route("/",methods=['GET'])
 async def index():
-    return "ok"
+    return send_from_directory(app.static_folder,"index.html")
 
 @app.route('/api',methods=['POST'])
 async def update_RGB():
@@ -260,12 +262,25 @@ async def update_RGB():
         loop.call_soon_threadsafe(state_changed.set)
     else:
         print("error: Invalid format")
-    return "thanks"
+    return {"status": "Good"}
 
+@app.route("/api/state",methods=['GET'])
+async def send_state():
+    global schedule
+    global state
+    global loop
+    return schedule | {"state": state}
+@app.route("/<path:path>")
+async def serve_spa(path):
+    full_path = os.path.join(app.static_folder, path)
 
+    # If file exists (assets/js/css), serve it; otherwise serve index.html (SPA routing)
+    if os.path.isfile(full_path):
+        return send_from_directory(app.static_folder, path)
+    return send_from_directory(app.static_folder, "index.html")
 
 
 if __name__ == '__main__':
     t = threading.Thread(target=start_asyncio_thread, daemon=False)
     t.start()
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=80)
