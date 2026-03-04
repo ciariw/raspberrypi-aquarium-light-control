@@ -1,9 +1,10 @@
 from config import *
-import asyncio
 from datetime import datetime, timedelta, timezone
 import json
-from flask import Flask
+from flask import Flask, request
 import asyncio
+import tempfile
+import os
 import threading
 from gpiozero import LED, PWMOutputDevice
 
@@ -11,12 +12,94 @@ from gpiozero import LED, PWMOutputDevice
 # Connected pins are 23,24,25,26
 # each used to control W, R,G,B unless relay controlled
 #
+''' Need to work this out. Problem when running on PC
+
+class PinAssignment(PWMOutputDevice):
+    duty = 0
+    frequency = 0
+    pinObj = None
+    pin = None
+
+    def __init__(self, pin=None):
+        self.pin = pin
+        super().__init__(pin = self.pin)
+
+    def update_HW_(self):
+        pass
+
+    def set_duty(self,duty):
+        self.duty = duty
+        
+
+    def set_frequency(self,frequency):
+        self.frequency = frequency
+        try:
+            self.pinObj = PWMOutputDevice(pin=self.pin, frequency=self.frequency)
+        except:
+            print("attempted to set frequency. It failed")
+
+    def get_duty(self):
+        return self.duty
+
+    def get_frequency(self):
+        return self.frequency
+
+'''
+
+'''
+Former method
+if not IS_SIMULATED:
+    R = PWMOutputDevice(pin=pin_R, frequency=1000 ) if pin(pin_R) is not None else None
+    G = PWMOutputDevice(pin=pin_G, frequency=1000 ) if pin(pin_G) is not None else None
+    B = PWMOutputDevice(pin=pin_B, frequency=1000 ) if pin(pin_B) is not None else None
+    W = PWMOutputDevice(pin=pin_W, frequency=1000 ) if pin(pin_W) is not None else None
+
+'''
+
+class PinAssignment():
+
+    pinObj = None
+    pin = None
+
+    frequency = 100
+    duty = 0
+
+    def __init__(self, pin):
+        self.pin = pin
+        try:
+            self.pinObj = PWMOutputDevice(pin=self.pin)
+        except:
+            print("attempted to create pin object. It failed")
+
+
+    def set_duty(self,duty):
+        self.duty = duty
+        try:
+            self.pinObj.value = self.duty
+        except:
+            print("attempted to set Duty. It failed")
+
+
+    def set_frequency(self,frequency):
+        self.frequency = frequency
+        try:
+            self.pinObj.frequency = frequency
+        except:
+            print("attempted to set frequency. It failed")
+
+    def get_duty(self):
+        return self.duty
+
+    def get_frequency(self):
+        return self.frequency
+
+
 
 global schedule
 global state
 global today
-
-IS_SIMULATED = True
+loop = None
+IS_SIMULATED = False
 
 
 
@@ -24,6 +107,7 @@ IS_SIMULATED = True
 today = datetime.now().strftime("%Y-%m-%d")
 state = -1
 state_changed = asyncio.Event()
+update_schedule = asyncio.Event()
 
 
 app = Flask(__name__)
@@ -34,6 +118,27 @@ def pin(x):
         return x
     else:
         return None
+
+
+def write_schedule(key,value):
+    global state
+    global schedule
+    fp = os.path.dirname("schedule.json")
+
+
+    with open("schedule.json", "r") as f:
+        schedule = json.load(f)
+
+    with tempfile.NamedTemporaryFile("w",dir=fp, delete=False) as file:
+        #print(schedule)
+        if schedule:
+            #print(schedule)
+            schedule[key][state] = value
+            json.dump(schedule, file,indent = 2)
+            file.flush()
+            os.fsync(file.fileno())
+
+    os.replace(file.name,"schedule.json")
 
 
 with open("schedule.json", "r") as f:
@@ -53,33 +158,23 @@ Wants:
 async def color():
     global state
     global schedule
-
+    R = PinAssignment(pin_R)
+    G = PinAssignment(pin_G)
+    B = PinAssignment(pin_B)
+    W = PinAssignment(pin_W)
     print(f"update state {state}. Turning unit {schedule['set'][state]}")
-    if not IS_SIMULATED:
-        R = PWMOutputDevice(pin=pin_R, frequency=1000 ) if pin(pin_R) is not None else None
-        G = PWMOutputDevice(pin=pin_G, frequency=1000 ) if pin(pin_G) is not None else None
-        B = PWMOutputDevice(pin=pin_B, frequency=1000 ) if pin(pin_B) is not None else None
-        W = PWMOutputDevice(pin=pin_W, frequency=1000 ) if pin(pin_W) is not None else None
 
     while True:
         await state_changed.wait()
         state_changed.clear()
-        if schedule["set"][state] == "ON":
-            print("Trigger ON")
-            if not IS_SIMULATED:
-                R.value= 0
-                G.value= 0
-                B.value= 1
-                W.value= 1
-                
-        else:
-            print("Trigger OFF")
-            if not IS_SIMULATED:
-                R.value=0
-                G.value=0
-                B.value=0
-                W.value=0
 
+        assignment = schedule["rgbw"][state]
+        R.set_duty(round(assignment[0]/255,2))
+        G.set_duty(round(assignment[1]/255,2))
+        B.set_duty(round(assignment[2]/255,2))
+        W.set_duty(round(assignment[3]/255,2))
+
+        print(f"Rpin: {R.get_duty()}\nGpin: {G.get_duty()}\nBpin: {B.get_duty()}\nWpin: {W.get_duty()}\n")
 
 async def get_state():
     while True:
@@ -140,6 +235,7 @@ async def get_state():
 
 
 def start_asyncio_thread():
+    global loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -149,8 +245,24 @@ def start_asyncio_thread():
 
 
 @app.route("/",methods=['GET'])
-def index():
+async def index():
     return "ok"
+
+@app.route('/api',methods=['POST'])
+async def update_RGB():
+    global loop
+    data = request.get_json()
+    #print(data)
+    output = [0,0,0,0]
+    if 'r' in data and 'b' in data and 'g' in data and 'w' in data:
+        output = [data['r'],data['g'],data['b'],data['w']]
+        write_schedule("rgbw", output)
+        loop.call_soon_threadsafe(state_changed.set)
+    else:
+        print("error: Invalid format")
+    return "thanks"
+
+
 
 
 if __name__ == '__main__':
